@@ -1,189 +1,98 @@
-#include "file_manager.h"  
-#include <algorithm>
-#include <fstream>  
-#include <iostream> 
-#include <sstream>  
-#include <stdexcept> 
-namespace fs = std::filesystem;
+/*
+Map Class: The map class will contain a public method map(), that accepts a key and value. 
+The key will be the file name and the value will be a single line of raw data from the file. 
+The map() function will tokenize the value into distinct words (remove punctuation, whitespace and capitalization). 
+The map() function will call a second function export() that takes a key and value as two parameters. 
+The export function will buffer output in memory and periodically write the data out to disk (periodicity can be based on the size of the buffer). 
+The intermediate data will be written to the temporary directory (specified via command line). 
+*/
 
-// Check whether the path exists and is actually a directory.
-bool FileManager::directory_exists(const fs::path& directory) const {
-    return fs::exists(directory) && fs::is_directory(directory);
+#include "mapper.h" 
+#include <cctype> 
+#include <sstream>
+
+// Mapper constructor:
+// Sets up references and settings needed for the map phase.
+Mapper::Mapper(FileManager& fileManager, const std::filesystem::path& temp_directory, std::size_t max_buffer_size)
+    : file_manager_(fileManager),       // Save the shared FileManager reference.
+      temp_directory_(temp_directory),   // Save the temp directory path for future chunk writes.
+      max_buffer_size_(max_buffer_size),   // Save how large the in-memory buffer may grow before flushing.
+      chunk_counter_(0) {               // Start the chunk counter at 0 for chunk_0.txt.
 }
 
-// Make sure a directory exists. If it does not, try to create it.
-bool FileManager::ensure_directory(const fs::path& directory) const {
-    try {
-        if (!fs::exists(directory)) {
-            fs::create_directories(directory);
+// map handles one raw line from one file.
+bool Mapper::map(const std::string& file_name, const std::string& raw_line) {
+    (void)file_name;
+    // Convert the raw line into normalized tokens: "Hello, WORLD!" -> ["hello", "world"]
+    std::vector<std::string> tokens = tokenize_and_normalize(raw_line);
+
+    // Export each token as a ("word", 1) record.
+    for (const auto& token : tokens) {
+        if (!export_record(token, 1)) {
+            return false; 
         }
-        return fs::exists(directory) && fs::is_directory(directory);
     }
-    catch (const std::exception& ex) {
-        std::cerr << "Failed to create/access directory: " << directory << "\nReason: " << ex.what() << std::endl;
-        return false;
-    }
+
+    return true; 
 }
 
-// Delete everything inside a directory.
-bool FileManager::clear_directory_contents(const fs::path& directory) const {
-    try {
-        if (!directory_exists(directory)) {
-            return false;
+// Turn one raw line into clean lowercase tokens with punctuation removed.
+std::vector<std::string> Mapper::tokenize_and_normalize(const std::string& raw_line) const {
+    std::string cleaned_line;          
+    cleaned_line.reserve(raw_line.size());
+
+    // Look at each character in the original line.
+    for (unsigned char ch : raw_line) {
+        // If the character is a letter or number, keep it and lowercase it.
+        if (std::isalnum(ch)) {
+            cleaned_line.push_back(static_cast<char>(std::tolower(ch)));
         }
-        for (const auto& entry : fs::directory_iterator(directory)) {
-            fs::remove_all(entry.path());
+        else {
+ 
+            cleaned_line.push_back(' ');
         }
+    }
+
+    // Feed the cleaned line into a string stream so we can extract words using >>.
+    std::stringstream stream(cleaned_line);
+    std::vector<std::string> tokens;  // Final list of words from this line.
+    std::string token;                // Temporary variable for one token at a time.
+
+    // Extract words separated by spaces.
+    while (stream >> token) {
+        if (!token.empty()) {
+            tokens.push_back(token);
+        }
+    }
+
+    return tokens; 
+}
+
+// Save one mapper record into the in-memory buffer.
+bool Mapper::export_record(const std::string& key, int value) {
+    // Store the pair (word, 1) in the buffer.
+    buffer_.push_back({ key, value });
+
+    // If the buffer reached the allowed max size, flush it to disk now.
+    if (buffer_.size() >= max_buffer_size_) {
+        return flush_buffer();
+    }
+
+    return true;  // Buffer accepted the new record.
+}
+
+// Write the current mapper buffer to a temp chunk file.
+bool Mapper::flush_buffer() {
+    if (buffer_.empty()) {
         return true;
     }
-    catch (const std::exception& ex) {
-        std::cerr << "Failed to clear directory: " << directory << "\nReason: " << ex.what() << std::endl;
-        return false;
-    }
-}
-
-// Find regular files in the input directory and return them as a sorted list.
-std::vector<fs::path> FileManager::get_input_files(const fs::path& input_directory) const {
-    std::vector<fs::path> files;  // This will hold the files we discover.
-
-    // If the input directory is invalid, just return an empty list.
-    if (!directory_exists(input_directory)) {
-        return files;
+    // Ask FileManager to write the current buffer into chunk_N.txt.
+    const bool write_ok = file_manager_.write_temp_chunk(temp_directory_, chunk_counter_, buffer_);
+    if (!write_ok) {
+        return false;  // Stop if the write failed.
     }
 
-    // Look through everything inside the input directory.
-    for (const auto& entry : fs::directory_iterator(input_directory)) {
-        // Only keep regular files, not folders.
-        if (entry.is_regular_file()) {
-            files.push_back(entry.path());
-        }
-    }
-
-    // Sort the file list so runs are more predictable and easier to test.
-    std::sort(files.begin(), files.end());
-    return files;
-}
-
-// Read every line from one file and return those lines in a vector.
-std::vector<std::string> FileManager::read_all_lines(const fs::path& file_path) const {
-    std::vector<std::string> lines;   // Store each line we read.
-    std::ifstream inputFile(file_path);  // Open the file for reading.
-
-    // If the file cannot be opened, throw an exception.
-    // Workflow will catch it and stop safely.
-    if (!inputFile.is_open()) {
-        throw std::runtime_error("Could not open input file: " + file_path.string());
-    }
-
-    std::string line;  // Temporary variable for one line at a time.
-
-    // Read until end-of-file.
-    while (std::getline(inputFile, line)) {
-        lines.push_back(line);  // Save each line into the result vector.
-    }
-
-    return lines;
-}
-
-// Write one mapper chunk file such as chunk_0.txt into the temp directory.
-bool FileManager::write_temp_chunk(
-    const fs::path& temp_directory,
-    int chunk_number,
-    const std::vector<std::pair<std::string, int>>& records) const {
-
-    try {
-        // Build a chunk file path like temp/chunk_0.txt.
-        fs::path chunkPath = temp_directory / ("chunk_" + std::to_string(chunk_number) + ".txt");
-
-        // Open the chunk file for writing.
-        std::ofstream outputFile(chunkPath);
-
-        // If it does not open, return false.
-        if (!outputFile.is_open()) {
-            std::cerr << "Could not open temp chunk file: " << chunkPath << std::endl;
-            return false;
-        }
-
-        // Write each mapper record as: word TAB 1
-        for (const auto& record : records) {
-            outputFile << record.first << '\t' << record.second << '\n';
-        }
-
-        return true;
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "Failed to write temp chunk. Reason: " << ex.what() << std::endl;
-        return false;
-    }
-}
-
-// Append final reduced results to the final output file.
-bool FileManager::append_final_results(
-    const fs::path& output_directory,
-    const std::string& output_file_name,
-    const std::vector<std::pair<std::string, int>>& records) const {
-
-    try {
-        // Build the full path to the final output file.
-        fs::path outputPath = output_directory / output_file_name;
-
-        // Open in append mode so new results are added to the end.
-        std::ofstream outputFile(outputPath, std::ios::app);
-
-        if (!outputFile.is_open()) {
-            std::cerr << "Could not open final output file: " << outputPath << std::endl;
-            return false;
-        }
-
-        // Write each final reduced pair as: word TAB totalCount
-        for (const auto& record : records) {
-            outputFile << record.first << '\t' << record.second << '\n';
-        }
-
-        return true;
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "Failed to append final output. Reason: " << ex.what() << std::endl;
-        return false;
-    }
-}
-
-// Reset the final output file so it starts empty.
-bool FileManager::reset_final_output_file(
-    const fs::path& output_directory,
-    const std::string& output_file_name) const {
-
-    try {
-        // Build the path to the final output file.
-        fs::path outputPath = output_directory / output_file_name;
-
-        // Open in truncate mode so any old content is erased.
-        std::ofstream outputFile(outputPath, std::ios::trunc);
-
-        // Return true if the file opened correctly.
-        return outputFile.is_open();
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "Failed to reset output file. Reason: " << ex.what() << std::endl;
-        return false;
-    }
-}
-
-// Create the required empty SUCCESS file in the output directory.
-bool FileManager::create_success_file(const fs::path& output_directory) const {
-    try {
-        // Build the full SUCCESS file path.
-        fs::path successPath = output_directory / "SUCCESS";
-
-        // Open the file in truncate mode.
-        // That creates it if missing and clears it if it already exists.
-        std::ofstream successFile(successPath, std::ios::trunc);
-
-        // Return true if the file opened successfully.
-        return successFile.is_open();
-    }
-    catch (const std::exception& ex) {
-        std::cerr << "Failed to create SUCCESS file. Reason: " << ex.what() << std::endl;
-        return false;
-    }
+    ++chunk_counter_;   // Move to the next chunk number for the next flush.
+    buffer_.clear();   // Clear the in-memory records because they are now on disk.
+    return true;
 }
