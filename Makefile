@@ -1,6 +1,6 @@
 # Compiler
 CXX = g++
-CXXFLAGS = -std=c++17 -Wall -Iheaders
+CXXFLAGS = -std=c++20 -Wall -Iheaders
 
 # Directories
 SRC_DIR = src
