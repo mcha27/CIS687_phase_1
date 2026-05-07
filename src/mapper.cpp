@@ -11,8 +11,6 @@ The intermediate data will be written to the temporary directory (specified via 
 #include <cctype> 
 #include <sstream>
 
-// Mapper constructor:
-// Sets up references and settings needed for the map phase.
 Mapper::Mapper(FileManager& fileManager, const std::filesystem::path& temp_directory, std::size_t max_buffer_size)
     : file_manager_(fileManager),       // Save the shared FileManager reference.
       temp_directory_(temp_directory),   // Save the temp directory path for future chunk writes.
