@@ -1,29 +1,28 @@
-#pragma once
+#define MAPPER_DLL_EXPORTS
 
-#if defined(_WIN32) || defined(_WIN64)
-    #ifdef MAPPER_DLL_EXPORTS
-        #define MAPPER_API __declspec(dllexport)
-    #else
-        #define MAPPER_API __declspec(dllimport)
-    #endif
-#else
-    // Linux / Mac / GCC / Clang
-    #define MAPPER_API
-#endif
+#include "mapper_dll.h"
+#include "mapper.h"
+#include "file_manager.h"
 
-#include <cstddef>
+#include <filesystem>
 
 extern "C" {
+    void* CreateMapper(void* fileManager, const char* temp_dir, std::size_t max_buffer_size) {
+        FileManager* fm = static_cast<FileManager*>(fileManager);
+        return new Mapper(*fm, std::filesystem::path(temp_dir), max_buffer_size);
+    }
 
-    MAPPER_API void* CreateMapper(void* fileManager,
-                                  const char* temp_dir,
-                                  std::size_t max_buffer_size);
+    void DestroyMapper(void* mapper){
+        delete static_cast<Mapper*>(mapper);
+    }
 
-    MAPPER_API void DestroyMapper(void* mapper);
+    bool MapperMap(void* mapper, const char* file_name,const char* raw_line){
+        Mapper* m = static_cast<Mapper*>(mapper);
+        return m->map(file_name, raw_line);
+    }
 
-    MAPPER_API bool MapperMap(void* mapper,
-                              const char* file_name,
-                              const char* raw_line);
-
-    MAPPER_API bool MapperFlush(void* mapper);
+    bool MapperFlush(void* mapper){
+        Mapper* m = static_cast<Mapper*>(mapper);
+        return m->flush_buffer();
+    }
 }

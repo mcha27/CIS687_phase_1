@@ -1,10 +1,12 @@
 // workflow.cpp
-// Cross-platform MapReduce pipeline using dynamic Mapper plugin
+// Cross-platform MapReduce pipeline using dynamic Mapper + Reducer plugins
 
 #include "../headers/workflow.h"
+
 #include <exception>
-#include <iostream>
 #include <filesystem>
+#include <iostream>
+#include <vector>
 
 #ifdef _WIN32
     #include <windows.h>
@@ -14,9 +16,7 @@
 
 namespace fs = std::filesystem;
 
-// =========================================================
 // Cross-platform dynamic loading macros
-// =========================================================
 #ifdef _WIN32
     #define LIB_HANDLE HMODULE
     #define LOAD_LIB(path) LoadLibrary(path)
@@ -31,59 +31,60 @@ namespace fs = std::filesystem;
     #define LIB_EXT ".so"
 #endif
 
-// =========================================================
-// Function pointer types (same across platforms)
-// =========================================================
+
+// Mapper function pointer types
 using CreateMapperFunc = void* (*)(void*, const char*, std::size_t);
 using DestroyMapperFunc = void (*)(void*);
 using MapperMapFunc = bool (*)(void*, const char*, const char*);
 using MapperFlushFunc = bool (*)(void*);
 
+// Reducer function pointer types
+using CreateReducerFunc = void* (*)(void*, const char*, const char*, std::size_t);
+using DestroyReducerFunc = void (*)(void*);
+using ReducerReduceFunc = bool (*)(void*, const char*, const int*, std::size_t);
+using ReducerFinishFunc = bool (*)(void*);
+
 Workflow::Workflow() = default;
 
-bool Workflow::run(
-    const fs::path& input_directory,
-    const fs::path& output_directory,
-    const fs::path& temp_directory) {
-
+bool Workflow::run(const fs::path& input_directory, const fs::path& output_directory, const fs::path& temp_directory) {
     try {
-        // Step 1: Validate input directory
+        // VALIDATE INPUT DIRECTORY
         if (!file_manager_.directory_exists(input_directory)) {
             std::cerr << "Input directory does not exist: " << input_directory << std::endl;
             return false;
         }
 
-        // Step 2: Ensure output directory
+        // ENSURE OUTPUT DIRECTORY EXISTS
         if (!file_manager_.ensure_directory(output_directory)) {
             std::cerr << "Could not create/access output directory." << std::endl;
             return false;
         }
 
-        // Step 3: Ensure temp directory
+        // ENSURE TEMP DIRECTORY EXISTS
         if (!file_manager_.ensure_directory(temp_directory)) {
             std::cerr << "Could not create/access temp directory." << std::endl;
             return false;
         }
 
-        // Step 4: Clear output directory
+        // CLEAR OUTPUT DIRECTORY
         if (!file_manager_.clear_directory_contents(output_directory)) {
             std::cerr << "Could not clear output directory." << std::endl;
             return false;
         }
 
-        // Step 5: Clear temp directory
+        // CLEAR TEMP DIRECTORY
         if (!file_manager_.clear_directory_contents(temp_directory)) {
             std::cerr << "Could not clear temp directory." << std::endl;
             return false;
         }
 
-        // Step 6: Reset output file
+        // RESET OUPUT FILES
         if (!file_manager_.reset_final_output_file(output_directory, k_output_file_name)) {
             std::cerr << "Could not reset final output file." << std::endl;
             return false;
         }
 
-        // Step 7: Get input files
+        // GET INPUT FILES
         const auto input_files = file_manager_.get_input_files(input_directory);
 
         if (input_files.empty()) {
@@ -91,19 +92,20 @@ bool Workflow::run(
             return false;
         }
 
-        // =========================================================
-        // STEP 8: LOAD MAPPER LIBRARY (cross-platform)
-        // =========================================================
-        std::string libPath = "bin/dll/mapper";
-        libPath += LIB_EXT;
+        // LOAD MAPPER LIBRARY
+        std::string mapperLibPath = "bin/dll/mapper";
+        mapperLibPath += LIB_EXT;
 
-        LIB_HANDLE mapperLib = LOAD_LIB(libPath.c_str());
+        LIB_HANDLE mapperLib = LOAD_LIB(mapperLibPath.c_str());
 
         if (!mapperLib) {
+
 #ifdef _WIN32
-            std::cerr << "Failed to load mapper DLL." << std::endl;
+            std::cerr << "Failed to load mapper library."
+                      << std::endl;
 #else
-            std::cerr << "Failed to load mapper SO: " << dlerror() << std::endl;
+            std::cerr << "Failed to load mapper library: "
+                      << dlerror() << std::endl;
 #endif
             return false;
         }
@@ -119,9 +121,7 @@ bool Workflow::run(
             return false;
         }
 
-        // =========================================================
-        // STEP 9: CREATE MAPPER INSTANCE
-        // =========================================================
+        // CREATE MAPPER INSTANCE
         void* mapper = CreateMapper(
             static_cast<void*>(&file_manager_),
             temp_directory.string().c_str(),
@@ -129,26 +129,19 @@ bool Workflow::run(
         );
 
         if (!mapper) {
-            std::cerr << "Failed to create mapper instance." << std::endl;
+            std::cerr << "Failed to create mapper instance."
+                      << std::endl;
+
             CLOSE_LIB(mapperLib);
             return false;
         }
 
-        // =========================================================
-        // STEP 10: RUN MAPPER
-        // =========================================================
+        // RUN MAPPER
         for (const auto& file_path : input_files) {
             const auto lines = file_manager_.read_all_lines(file_path);
-
             for (const auto& line : lines) {
-                if (!MapperMap(
-                        mapper,
-                        file_path.filename().string().c_str(),
-                        line.c_str())) {
-
-                    std::cerr << "Mapper failed while processing file: "
-                              << file_path << std::endl;
-
+                if (!MapperMap(mapper, file_path.filename().string().c_str(), line.c_str())) {
+                    std::cerr << "Mapper failed while processing file: " << file_path << std::endl;
                     DestroyMapper(mapper);
                     CLOSE_LIB(mapperLib);
                     return false;
@@ -156,60 +149,124 @@ bool Workflow::run(
             }
         }
 
-        // =========================================================
-        // STEP 11: FLUSH MAPPER
-        // =========================================================
+        // FLUSH MAPPER
         if (!MapperFlush(mapper)) {
             std::cerr << "Failed to flush mapper buffer." << std::endl;
+            DestroyMapper(mapper);
+            CLOSE_LIB(mapperLib);
+            return false;
+        }
+
+        // SORT / GROUP
+        IntermediateSorter sorter(file_manager_);
+
+        const auto grouped_data = sorter.aggregate(temp_directory);
+
+        // LOAD REDUCER LIBRARY
+        std::string reducerLibPath = "bin/dll/reducer";
+        reducerLibPath += LIB_EXT;
+
+        LIB_HANDLE reducerLib = LOAD_LIB(reducerLibPath.c_str());
+
+        if (!reducerLib) {
+
+#ifdef _WIN32
+            std::cerr << "Failed to load reducer library."
+                      << std::endl;
+#else
+            std::cerr << "Failed to load reducer library: "
+                      << dlerror() << std::endl;
+#endif
 
             DestroyMapper(mapper);
             CLOSE_LIB(mapperLib);
             return false;
         }
 
-        // =========================================================
-        // STEP 12: SORT
-        // =========================================================
-        IntermediateSorter sorter(file_manager_);
-        const auto grouped_data = sorter.aggregate(temp_directory);
+        auto CreateReducer = (CreateReducerFunc)GET_SYM(reducerLib, "CreateReducer");
+        auto DestroyReducer = (DestroyReducerFunc)GET_SYM(reducerLib, "DestroyReducer");
+        auto ReducerReduce = (ReducerReduceFunc)GET_SYM(reducerLib, "ReducerReduce");
+        auto ReducerFinish = (ReducerFinishFunc)GET_SYM(reducerLib, "ReducerFinish");
 
-        // =========================================================
-        // STEP 13: REDUCE
-        // =========================================================
-        Reducer reducer(file_manager_, output_directory, k_output_file_name);
+        if (!CreateReducer || !DestroyReducer || !ReducerReduce || !ReducerFinish) {
+            std::cerr << "Failed to load reducer symbols." << std::endl;
+            DestroyMapper(mapper);
+            CLOSE_LIB(mapperLib);
+            CLOSE_LIB(reducerLib);
+            return false;
+        }
 
+        //CREATE REDUCER INSTANCE
+        void* reducer = CreateReducer(
+            static_cast<void*>(&file_manager_),
+            output_directory.string().c_str(),
+            k_output_file_name,
+            500
+        );
+
+        if (!reducer) {
+
+            std::cerr << "Failed to create reducer instance."
+                      << std::endl;
+
+            DestroyMapper(mapper);
+
+            CLOSE_LIB(mapperLib);
+            CLOSE_LIB(reducerLib);
+
+            return false;
+        }
+
+        //RUN REDUCER
         for (const auto& entry : grouped_data) {
-            if (!reducer.reduce(entry.first, entry.second)) {
-                std::cerr << "Reducer failed for key: " << entry.first << std::endl;
+
+            const std::string& key = entry.first;
+            const std::vector<int>& values = entry.second;
+
+            if (!ReducerReduce(
+                    reducer,
+                    key.c_str(),
+                    values.data(),
+                    values.size())) {
+
+                std::cerr << "Reducer failed for key: "
+                          << key << std::endl;
 
                 DestroyMapper(mapper);
+                DestroyReducer(reducer);
+
                 CLOSE_LIB(mapperLib);
+                CLOSE_LIB(reducerLib);
+
                 return false;
             }
         }
 
-        // =========================================================
-        // STEP 14: FINALIZE
-        // =========================================================
-        if (!reducer.finish()) {
-            std::cerr << "Failed to finish reducer output." << std::endl;
+        // FINISH REDUCER
+        if (!ReducerFinish(reducer)) {
+
+            std::cerr << "Failed to finish reducer output."
+                      << std::endl;
 
             DestroyMapper(mapper);
+            DestroyReducer(reducer);
+
             CLOSE_LIB(mapperLib);
+            CLOSE_LIB(reducerLib);
+
             return false;
         }
-
-        // =========================================================
-        // CLEANUP
-        // =========================================================
+        //CLEANUP
         DestroyMapper(mapper);
+        DestroyReducer(reducer);
+
         CLOSE_LIB(mapperLib);
+        CLOSE_LIB(reducerLib);
 
+        // SUCCESS
         std::cout << "MapReduce completed successfully." << std::endl;
-        std::cout << "Final output file: "
-                  << (output_directory / k_output_file_name) << std::endl;
-        std::cout << "SUCCESS file created in: " << output_directory << std::endl;
-
+        std::cout << "Final output file: " << (output_directory / k_output_file_name) << std::endl;
+        std::cout << "SUCCESS file created in: " << output_directory<< std::endl;
         return true;
     }
     catch (const std::exception& ex) {

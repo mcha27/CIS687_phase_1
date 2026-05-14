@@ -19,33 +19,47 @@ SRC_DIR = src
 OBJ_DIR = bin/obj
 BIN_DIR = bin
 DLL_DIR = bin/dll
+OUTPUT_DIR = output
+TEMP_DIR = temp
 
 # =========================
 # Output targets
 # =========================
 TARGET = $(BIN_DIR)/main
-DLL_TARGET = $(DLL_DIR)/mapper.$(LIB_EXT)
+
+MAPPER_DLL_TARGET = $(DLL_DIR)/mapper.$(LIB_EXT)
+REDUCER_DLL_TARGET = $(DLL_DIR)/reducer.$(LIB_EXT)
 
 # =========================
 # Source files
 # =========================
 SRCS = $(wildcard $(SRC_DIR)/*.cpp)
 
-# Main executable objects (NO PIC)
+# =========================
+# MAIN EXECUTABLE OBJECTS
+# =========================
 MAIN_OBJS = $(patsubst $(SRC_DIR)/%.cpp, $(OBJ_DIR)/main_%.o, $(SRCS))
 
-# DLL-specific sources
-DLL_SRCS = mapper.cpp mapper_dll.cpp file_manager.cpp
-
-DLL_OBJS = \
+# =========================
+# MAPPER DLL OBJECTS
+# =========================
+MAPPER_DLL_OBJS = \
     $(OBJ_DIR)/dll_mapper.o \
     $(OBJ_DIR)/dll_mapper_dll.o \
-    $(OBJ_DIR)/dll_file_manager.o
+    $(OBJ_DIR)/dll_mapper_file_manager.o
+
+# =========================
+# REDUCER DLL OBJECTS
+# =========================
+REDUCER_DLL_OBJS = \
+    $(OBJ_DIR)/dll_reducer.o \
+    $(OBJ_DIR)/dll_reducer_dll.o \
+    $(OBJ_DIR)/dll_reducer_file_manager.o
 
 # =========================
 # Default target
 # =========================
-all: $(TARGET) $(DLL_TARGET)
+all: $(TARGET) $(MAPPER_DLL_TARGET) $(REDUCER_DLL_TARGET)
 
 # =========================
 # MAIN EXECUTABLE
@@ -54,36 +68,54 @@ $(TARGET): $(MAIN_OBJS)
 	@mkdir -p $(BIN_DIR)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-# Compile main objects (NO -fPIC)
+# Compile main executable objects (NO PIC)
 $(OBJ_DIR)/main_%.o: $(SRC_DIR)/%.cpp
 	@mkdir -p $(OBJ_DIR)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# =========================
-# DLL BUILD
-# =========================
-$(DLL_TARGET): $(DLL_OBJS)
+# =========================================================
+# MAPPER DLL
+# =========================================================
+$(MAPPER_DLL_TARGET): $(MAPPER_DLL_OBJS)
 	@mkdir -p $(DLL_DIR)
 	$(CXX) -shared -o $@ $^
 
-# Compile DLL objects (PIC REQUIRED)
-$(OBJ_DIR)/dll_mapper.o: src/mapper.cpp
+$(OBJ_DIR)/dll_mapper.o: $(SRC_DIR)/mapper.cpp
 	@mkdir -p $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -fPIC -c $< -o $@
+	$(CXX) $(CXXFLAGS) -fPIC -DMAPPER_DLL_EXPORTS -c $< -o $@
 
-$(OBJ_DIR)/dll_mapper_dll.o: src/mapper_dll.cpp
+$(OBJ_DIR)/dll_mapper_dll.o: $(SRC_DIR)/mapper_dll.cpp
 	@mkdir -p $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -fPIC -c $< -o $@
+	$(CXX) $(CXXFLAGS) -fPIC -DMAPPER_DLL_EXPORTS -c $< -o $@
 
-$(OBJ_DIR)/dll_file_manager.o: src/file_manager.cpp
+$(OBJ_DIR)/dll_mapper_file_manager.o: $(SRC_DIR)/file_manager.cpp
 	@mkdir -p $(OBJ_DIR)
-	$(CXX) $(CXXFLAGS) -fPIC -c $< -o $@
+	$(CXX) $(CXXFLAGS) -fPIC -DMAPPER_DLL_EXPORTS -c $< -o $@
+
+# =========================================================
+# REDUCER DLL
+# =========================================================
+$(REDUCER_DLL_TARGET): $(REDUCER_DLL_OBJS)
+	@mkdir -p $(DLL_DIR)
+	$(CXX) -shared -o $@ $^
+
+$(OBJ_DIR)/dll_reducer.o: $(SRC_DIR)/reducer.cpp
+	@mkdir -p $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -fPIC -DREDUCER_DLL_EXPORTS -c $< -o $@
+
+$(OBJ_DIR)/dll_reducer_dll.o: $(SRC_DIR)/reducer_dll.cpp
+	@mkdir -p $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -fPIC -DREDUCER_DLL_EXPORTS -c $< -o $@
+
+$(OBJ_DIR)/dll_reducer_file_manager.o: $(SRC_DIR)/file_manager.cpp
+	@mkdir -p $(OBJ_DIR)
+	$(CXX) $(CXXFLAGS) -fPIC -DREDUCER_DLL_EXPORTS -c $< -o $@
 
 # =========================
 # CLEAN
 # =========================
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_DIR) $(BIN_DIR) $(OUTPUT_DIR) $(TEMP_DIR)
 
 # =========================
 # RUN
