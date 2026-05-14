@@ -9,7 +9,7 @@ The reduce method itself should not directly deal with any File IO.
 // Data input format: ("a", [1, 1, 1]), ("the", [1, 1]) etc.
 // After reducing: ("a", 3), ("the", 2) etc.
 
-#include "reducer.h"
+#include "../headers/reducer.h"
 #include <numeric>  // Needed for std::accumulate, to add values together.
 
 // Use constructor to intialize parameters for Reducer class 

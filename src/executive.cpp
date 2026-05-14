@@ -7,8 +7,8 @@
 // the program and transfers control to workflow.cpp.
 
 
-#include "executive.h"  
-#include "workflow.h"   
+#include "../headers/executive.h"
+#include "../headers/workflow.h"   
 #include <filesystem>   
 #include <iostream>    
 

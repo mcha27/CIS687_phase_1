@@ -6,7 +6,7 @@
 // is then passed to the reducer for final counting.
 
 
-#include "intermediate_sorter.h"  // Include the matching class declaration.
+#include "../headers/intermediate_sorter.h"  // Include the matching class declaration.
 #include <filesystem>  // Needed for directory iteration in the temp folder.
 #include <fstream>     // Needed for std::ifstream to read temp chunk files.
 #include <iostream>    // Needed for warning messages if a temp file cannot be read.

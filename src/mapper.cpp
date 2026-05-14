@@ -7,7 +7,7 @@ The export function will buffer output in memory and periodically write the data
 The intermediate data will be written to the temporary directory (specified via command line). 
 */
 
-#include "mapper.h" 
+#include "../headers/mapper.h" 
 #include <cctype> 
 #include <sstream>
 

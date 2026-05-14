@@ -1,4 +1,4 @@
-#include "executive.h"  // We include Executive because main uses that class to start the program.
+#include "../headers/executive.h"  // We include Executive because main uses that class to start the program.
 
 int main(int argc, char* argv[]) {
     Executive executive;                 // Create the Executive object that manages startup.
