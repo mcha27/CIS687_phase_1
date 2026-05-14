@@ -1,21 +1,29 @@
 // executive.h
 // This header file declares the Executive class, which handles
 // program startup and command-line processing. It provides the
-// run(...) function that validates the required directory inputs
+// run(...) function that validates and interprets directory inputs
 // and starts the workflow. This file defines what Executive can do,
 // while executive.cpp contains the actual implementation.
 
-#pragma once  // Tells the compiler to include this header file only one time.
+#pragma once
 
-// main.cpp creates an Executive object and tells it to run.
-// Executive does two jobs:
-// 1) read the command-line arguments from the user
-// 2) pass those folder paths to Workflow 
+#include <string>
+
+// The Executive class is responsible for:
+// 1) Parsing command-line arguments
+// 2) Applying default values for optional directories
+// 3) Starting the Workflow execution
 class Executive {
 public:
-    // run is the public entry point for this class.
-    // argc = how many command-line arguments were passed in
-    // argv = the actual argument values as character arrays
-    // It returns 0 when the program succeeds and 1 when something fails.
+    // Entry point for the program after main().
+    //
+    // Supported CLI formats:
+    //   MapReduce.exe <input>
+    //   MapReduce.exe <input> <output>
+    //   MapReduce.exe <input> <output> <temp>
+    //
+    // Returns:
+    //   0 = success
+    //   1 = failure
     int run(int argc, char* argv[]);
 };
